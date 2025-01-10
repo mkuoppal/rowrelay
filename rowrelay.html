@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Rowing Relay Calculator</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .input-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; }
+        input { padding: 5px; margin-right: 5px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 8px; border: 1px solid #ddd; text-align: left; }
+        th { background-color: #f5f5f5; }
+        .rower-inputs { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; }
+        .results { background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin-top: 20px; }
+        .transition-row { background-color: #f5f5f5; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        function App() {
+            const [state, setState] = React.useState({
+                totalDistance: 2000,
+                numTurns: 19,
+                transitionTime: 5,
+                transitionPaceMin: 1,
+                transitionPaceSec: 45,
+                rowers: [
+                    { name: 'Rower 1', paceMin: 1, paceSec: 29 },
+                    { name: 'Rower 2', paceMin: 1, paceSec: 29 },
+                    { name: 'Rower 3', paceMin: 1, paceSec: 29 },
+                    { name: 'Rower 4', paceMin: 1, paceSec: 29 }
+                ]
+            });
+
+            const [results, setResults] = React.useState(null);
+            const [timeline, setTimeline] = React.useState([]);
+
+            const convertPaceToSpeed = (minutes, seconds) => {
+                const totalSeconds = minutes * 60 + seconds;
+                return 500 / totalSeconds;
+            };
+
+            const convertSpeedToPace = (speed) => {
+                const totalSeconds = 500 / speed;
+                const minutes = Math.floor(totalSeconds / 60);
+                const seconds = Math.round((totalSeconds % 60) * 10) / 10;
+                return `${minutes}:${seconds.toFixed(1).padStart(4, '0')}`;
+            };
+
+            const formatTime = (seconds) => {
+                const mins = Math.floor(seconds / 60);
+                const secs = Math.round((seconds % 60) * 10) / 10;
+                return `${mins}:${secs.toFixed(1).padStart(4, '0')}`;
+            };
+
+            const calculateResults = React.useCallback(() => {
+                const numTransitions = state.numTurns - 1;
+                const totalTransitionTime = numTransitions * state.transitionTime;
+                const transitionSpeed = convertPaceToSpeed(state.transitionPaceMin, state.transitionPaceSec);
+                const transitionDistance = totalTransitionTime * transitionSpeed;
+                const activeDistance = state.totalDistance - transitionDistance;
+                const distancePerTurn = activeDistance / state.numTurns;
+
+                let currentTime = 0;
+                let currentDistance = 0;
+                let timelineEvents = [];
+                let rowerIndex = 0;
+
+                // Generate timeline
+                for (let turn = 0; turn < state.numTurns; turn++) {
+                    const currentRower = state.rowers[rowerIndex];
+                    const rowerSpeed = convertPaceToSpeed(currentRower.paceMin, currentRower.paceSec);
+                    const timeForTurn = distancePerTurn / rowerSpeed;
+
+                    timelineEvents.push({
+                        type: 'row',
+                        rower: currentRower.name,
+                        startTime: currentTime,
+                        duration: timeForTurn,
+                        distance: distancePerTurn,
+                        pace: rowerSpeed
+                    });
+
+                    currentTime += timeForTurn;
+                    currentDistance += distancePerTurn;
+
+                    if (turn < state.numTurns - 1) {
+                        timelineEvents.push({
+                            type: 'transition',
+                            from: currentRower.name,
+                            to: state.rowers[(rowerIndex + 1) % 4].name,
+                            startTime: currentTime,
+                            duration: state.transitionTime,
+                            distance: state.transitionTime * transitionSpeed,
+                            pace: transitionSpeed
+                        });
+
+                        currentTime += state.transitionTime;
+                        currentDistance += state.transitionTime * transitionSpeed;
+                    }
+
+                    rowerIndex = (rowerIndex + 1) % 4;
+                }
+
+                // Calculate running averages
+                timelineEvents = timelineEvents.map((event, index) => {
+                    const eventsUpToNow = timelineEvents.slice(0, index + 1);
+                    const totalDistance = eventsUpToNow.reduce((sum, e) => sum + e.distance, 0);
+                    const totalTime = event.startTime + event.duration;
+                    const averageSpeed = totalDistance / totalTime;
+                    
+                    return {
+                        ...event,
+                        cumulativeTime: totalTime,
+                        cumulativeDistance: totalDistance,
+                        averagePace: averageSpeed
+                    };
+                });
+
+                setTimeline(timelineEvents);
+
+                // Calculate per-rower statistics
+                const rowerResults = state.rowers.map(rower => {
+                    const rowerEvents = timelineEvents.filter(e => e.type === 'row' && e.rower === rower.name);
+                    const totalActiveTime = rowerEvents.reduce((sum, e) => sum + e.duration, 0);
+                    const numTurnsForRower = rowerEvents.length;
+                    
+                    return {
+                        name: rower.name,
+                        timePerTurn: totalActiveTime / numTurnsForRower,
+                        totalActiveTime,
+                        restTimeBetweenTurns: (currentTime - totalActiveTime) / (numTurnsForRower - 1)
+                    };
+                });
+
+                setResults({
+                    totalTime: currentTime,
+                    activeDistance,
+                    transitionDistance,
+                    distancePerTurn,
+                    rowerResults
+                });
+            }, [state]);
+
+            React.useEffect(() => {
+                calculateResults();
+            }, [state, calculateResults]);
+
+            const handleInputChange = (field, value) => {
+                setState(prev => ({
+                    ...prev,
+                    [field]: value
+                }));
+            };
+
+            const handleRowerChange = (index, field, value) => {
+                setState(prev => ({
+                    ...prev,
+                    rowers: prev.rowers.map((rower, i) => 
+                        i === index ? { ...rower, [field]: value } : rower
+                    )
+                }));
+            };
+
+            return (
+                <div className="container">
+                    <h1>Rowing Relay Calculator</h1>
+                    
+                    <div className="input-group">
+                        <label>Total Distance (m)</label>
+                        <input 
+                            type="number" 
+                            value={state.totalDistance} 
+                            onChange={e => handleInputChange('totalDistance', Number(e.target.value))}
+                        />
+                    </div>
+
+                    <div className="input-group">
+                        <label>Number of Turns</label>
+                        <input 
+                            type="number" 
+                            value={state.numTurns} 
+                            onChange={e => handleInputChange('numTurns', Number(e.target.value))}
+                        />
+                    </div>
+
+                    <div className="input-group">
+                        <label>Transition Time (seconds)</label>
+                        <input 
+                            type="number" 
+                            value={state.transitionTime} 
+                            onChange={e => handleInputChange('transitionTime', Number(e.target.value))}
+                        />
+                    </div>
+
+                    <div className="input-group">
+                        <label>Transition Pace (min:sec/500m)</label>
+                        <input 
+                            type="number" 
+                            value={state.transitionPaceMin} 
+                            onChange={e => handleInputChange('transitionPaceMin', Number(e.target.value))}
+                        /> :
+                        <input 
+                            type="number" 
+                            value={state.transitionPaceSec} 
+                            onChange={e => handleInputChange('transitionPaceSec', Number(e.target.value))}
+                        />
+                    </div>
+
+                    <h2>Rower Settings</h2>
+                    <div className="rower-inputs">
+                        {state.rowers.map((rower, index) => (
+                            <div key={rower.name} className="input-group">
+                                <label>{rower.name} Pace (min:sec/500m)</label>
+                                <input 
+                                    type="number" 
+                                    value={rower.paceMin} 
+                                    onChange={e => handleRowerChange(index, 'paceMin', Number(e.target.value))}
+                                /> :
+                                <input 
+                                    type="number" 
+                                    value={rower.paceSec} 
+                                    onChange={e => handleRowerChange(index, 'paceSec', Number(e.target.value))}
+                                />
+                            </div>
+                        ))}
+                    </div>
+
+                    {results && (
+                        <div className="results">
+                            <h2>Results</h2>
+                            <p>Total Time: {formatTime(results.totalTime)}</p>
+                            <p>Distance per Turn: {Math.round(results.distancePerTurn)}m</p>
+                            <p>Active Distance: {Math.round(results.activeDistance)}m</p>
+                            <p>Transition Distance: {Math.round(results.transitionDistance)}m</p>
+
+                            <h3>Individual Results</h3>
+                            {results.rowerResults.map(rower => (
+                                <div key={rower.name}>
+                                    <h4>{rower.name}</h4>
+                                    <p>Time per Turn: {formatTime(rower.timePerTurn)}</p>
+                                    <p>Rest Between Turns: {formatTime(rower.restTimeBetweenTurns)}</p>
+                                </div>
+                            ))}
+
+                            <h3>Timeline</h3>
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Event</th>
+                                        <th>Distance</th>
+                                        <th>Split Time</th>
+                                        <th>Cumulative Time</th>
+                                        <th>Current Pace</th>
+                                        <th>Average Pace</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {timeline.map((event, index) => (
+                                        <tr key={index} className={event.type === 'transition' ? 'transition-row' : ''}>
+                                            <td>
+                                                {event.type === 'row' 
+                                                    ? event.rower 
+                                                    : `${event.from} → ${event.to}`}
+                                            </td>
+                                            <td>{Math.round(event.distance)}m</td>
+                                            <td>{formatTime(event.duration)}</td>
+                                            <td>{formatTime(event.cumulativeTime)}</td>
+                                            <td>{convertSpeedToPace(event.pace)}</td>
+                                            <td>{convertSpeedToPace(event.averagePace)}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
